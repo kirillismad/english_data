@@ -1,0 +1,17 @@
+curl --compressed --location 'https://www.oxfordlearnersdictionaries.com/definition/english/avert' \
+--header 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7' \
+--header 'Accept-Encoding: gzip, deflate, br, zstd' \
+--header 'Accept-Language: en-US;q=0.8,en;q=0.7' \
+--header 'Cache-Control: max-age=0' \
+--header 'Connection: keep-alive' \
+--header 'DNT: 1' \
+--header 'Host: www.oxfordlearnersdictionaries.com' \
+--header 'Sec-Fetch-Dest: document' \
+--header 'Sec-Fetch-Mode: navigate' \
+--header 'Sec-Fetch-Site: same-origin' \
+--header 'Sec-Fetch-User: ?1' \
+--header 'Upgrade-Insecure-Requests: 1' \
+--header 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36' \
+--header 'sec-ch-ua: Google' \
+--header 'sec-ch-ua-mobile: ?0' \
+--header 'sec-ch-ua-platform: macOS'
