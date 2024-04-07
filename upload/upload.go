@@ -50,20 +50,8 @@ const baseUrl = "https://www.oxfordlearnersdictionaries.com"
 
 var client = http.DefaultClient
 
-func GetMeaningPage(ctx context.Context, relativePath string) ([]byte, error) {
-	parsedURL, err := url.Parse(baseUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	parsedRel, err := url.Parse(relativePath)
-	if err != nil {
-		return nil, err
-	}
-
-	resolvedURL := parsedURL.ResolveReference(parsedRel)
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedURL.String(), nil)
+func GetMeaningPage(ctx context.Context, absUrl *url.URL) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, absUrl.String(), nil)
 
 	if err != nil {
 		return nil, err
@@ -92,7 +80,7 @@ func GetMeaningPage(ctx context.Context, relativePath string) ([]byte, error) {
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("invalid status_code: %d, url: %s", response.StatusCode, resolvedURL)
+		return nil, fmt.Errorf("invalid status_code: %d, url: %s", response.StatusCode, absUrl)
 	}
 
 	gzipReader, err := gzip.NewReader(response.Body)
@@ -122,27 +110,24 @@ func SavePage(path string, content []byte) error {
 	return nil
 }
 
-// /us/definition/english/a_1
-func HandleUrl(ctx context.Context, relUrl string) error {
-	dir, filePath := filepath.Split(relUrl + ".html")
-	err := os.MkdirAll("."+dir, 0775)
-	if err != nil {
+func HandleUrl(ctx context.Context, absUrl *url.URL) error {
+	dir, filePath := filepath.Split(absUrl.Path + ".html")
+	dir = "." + dir
+
+	if err := os.MkdirAll(dir, 0775); err != nil {
 		return err
 	}
 
-	_, err = os.Stat("." + filepath.Join(dir, filePath))
-	if !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(dir, filePath)); !errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 
-	os.Stat("." + filepath.Join(dir, filePath))
-
-	content, err := GetMeaningPage(ctx, relUrl)
+	content, err := GetMeaningPage(ctx, absUrl)
 	if err != nil {
 		return err
 	}
 
-	err = SavePage("."+filepath.Join(dir, filePath), content)
+	err = SavePage(filepath.Join(dir, filePath), content)
 	if err != nil {
 		return err
 	}
@@ -150,16 +135,37 @@ func HandleUrl(ctx context.Context, relUrl string) error {
 	return nil
 }
 
+func BuildUrl(rawUrl string) (*url.URL, error) {
+	parsedURL, err := url.Parse(baseUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedRel, err := url.Parse(rawUrl)
+	if err != nil {
+		return nil, err
+	}
+	parsedRel.Fragment = ""
+
+	resolvedURL := parsedURL.ResolveReference(parsedRel)
+
+	return resolvedURL, nil
+}
+
 func DownloadPagesFromList(ctx context.Context) {
 	ch := GetLinks(ctx)
 
 	group, errCtx := errgroup.WithContext(ctx)
-	group.SetLimit(2)
+	group.SetLimit(3)
 
 	for v := range ch {
 		v := v
 		group.Go(func() error {
-			return HandleUrl(errCtx, v)
+			absUrl, err := BuildUrl(v)
+			if err != nil {
+				return err
+			}
+			return HandleUrl(errCtx, absUrl)
 		})
 	}
 	err := group.Wait()

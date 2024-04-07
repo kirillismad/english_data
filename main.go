@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/kirillismad/english_data/upload"
 )
 
 type PartOfSpeach string
@@ -99,11 +98,5 @@ func GetPossiblePartOfSpeaches(ctx context.Context) (map[string][]string, error)
 }
 
 func main() {
-	r, err := GetPossiblePartOfSpeaches(context.Background())
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	for k, v := range r {
-		fmt.Println(k, v[:1], len(v))
-	}
+	upload.DownloadPagesFromList(context.Background())
 }
