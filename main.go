@@ -1,163 +1,109 @@
 package main
 
 import (
-	"compress/gzip"
 	"context"
-	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
-	"golang.org/x/sync/errgroup"
 )
 
-func Must[T any](value T, err error) T {
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	return value
+type PartOfSpeach string
+
+const (
+	unknown   PartOfSpeach = "unknown"
+	noun      PartOfSpeach = "noun"
+	adjective PartOfSpeach = "adjective"
+	verb      PartOfSpeach = "verb"
+	adverb    PartOfSpeach = "adverb"
+)
+
+type WordPage struct {
+	Filename string
+
+	Word         string
+	PartOfSpeach PartOfSpeach
 }
 
-func GetLinks(ctx context.Context) <-chan string {
-	content := Must(os.Open("./content.html"))
+type PathItem struct {
+	path string
+	err  error
+}
 
-	reader := Must(goquery.NewDocumentFromReader(content))
-
-	ch := make(chan string)
+func GetFilePaths(ctx context.Context) <-chan PathItem {
+	result := make(chan PathItem)
 
 	go func() {
-		defer close(ch)
-		reader.Find("li").Each(func(i int, s *goquery.Selection) {
-			href, ok := s.Find("a").Attr("href")
-			if ok {
+		defer close(result)
+		dirPath := "./us/definition/english"
+		err := filepath.WalkDir(dirPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !d.IsDir() {
 				select {
 				case <-ctx.Done():
-				case ch <- href:
+					return ctx.Err()
+				case result <- PathItem{path: path}:
 				}
 			}
+			return nil
 		})
+		if err != nil {
+			select {
+			case <-ctx.Done():
+			case result <- PathItem{err: err}:
+			}
+		}
 	}()
 
-	return ch
+	return result
 }
 
-const baseUrl = "https://www.oxfordlearnersdictionaries.com"
+func GetPossiblePartOfSpeaches(ctx context.Context) (map[string][]string, error) {
+	resultSet := make(map[string][]string)
 
-var client = http.DefaultClient
+	pathItems := GetFilePaths(ctx)
 
-func GetMeaningPage(ctx context.Context, relativePath string) ([]byte, error) {
-	parsedURL, err := url.Parse(baseUrl)
-	if err != nil {
-		return nil, err
+	for pathItem := range pathItems {
+		if pathItem.err != nil {
+			return nil, pathItem.err
+		}
+
+		f, err := os.Open(pathItem.path)
+		if err != nil {
+			return nil, err
+		}
+		r, err := goquery.NewDocumentFromReader(f)
+		if err != nil {
+			return nil, err
+		}
+
+		webtopg := r.Find(".webtop")
+		word := webtopg.Find("h1.headword").Text()
+		pos := webtopg.Find("span.pos").Text()
+
+		posList := strings.Split(pos, ", ")
+		for _, v := range posList {
+			resultSet[v] = append(resultSet[v], word)
+		}
+
+		// resultSet[pos] = append(resultSet[pos], word)
 	}
 
-	parsedRel, err := url.Parse(relativePath)
-	if err != nil {
-		return nil, err
-	}
-
-	resolvedURL := parsedURL.ResolveReference(parsedRel)
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, resolvedURL.String(), nil)
-
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-	request.Header.Add("Accept-Encoding", "gzip, deflate, br, zstd")
-	request.Header.Add("Accept-Language", "en-US;q=0.8,en;q=0.7")
-	request.Header.Add("Cache-Control", "max-age=0")
-	request.Header.Add("Connection", "keep-alive")
-	request.Header.Add("DNT", "1")
-	request.Header.Add("Host", "www.oxfordlearnersdictionaries.com")
-	request.Header.Add("Sec-Fetch-Dest", "document")
-	request.Header.Add("Sec-Fetch-Mode", "navigate")
-	request.Header.Add("Sec-Fetch-Site", "same-origin")
-	request.Header.Add("Sec-Fetch-User", "?1")
-	request.Header.Add("Upgrade-Insecure-requestuests", "1")
-	request.Header.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-	request.Header.Add("sec-ch-ua", "Google")
-	request.Header.Add("sec-ch-ua-mobile", "?0")
-	request.Header.Add("sec-ch-ua-platform", "macOS")
-
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("invalid status_code: %d, url: %s", response.StatusCode, resolvedURL)
-	}
-
-	gzipReader, err := gzip.NewReader(response.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer gzipReader.Close()
-
-	content, err := io.ReadAll(gzipReader)
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
-}
-
-func SavePage(path string, content []byte) error {
-	file, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.Write(content)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func HandleUrl(ctx context.Context, relUrl string) error {
-	filePath := "." + relUrl + ".html"
-	_, err := os.Stat(filePath)
-
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-
-	content, err := GetMeaningPage(ctx, relUrl)
-	if err != nil {
-		return err
-	}
-
-	err = SavePage(filePath, content)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return resultSet, nil
 }
 
 func main() {
-	ctx := context.Background()
-
-	ch := GetLinks(ctx)
-
-	group, errCtx := errgroup.WithContext(ctx)
-	group.SetLimit(2)
-
-	for v := range ch {
-		v := v
-		group.Go(func() error {
-			return HandleUrl(errCtx, v)
-		})
-	}
-	err := group.Wait()
+	r, err := GetPossiblePartOfSpeaches(context.Background())
 	if err != nil {
 		log.Fatal(err.Error())
+	}
+	for k, v := range r {
+		fmt.Println(k, v[:1], len(v))
 	}
 }
